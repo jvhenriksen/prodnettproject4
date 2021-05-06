@@ -13,6 +13,221 @@ model Exercise4
     Is_wait_and_see:      boolean; ! true = wait and see, false = hard target
   end-declarations
   
+
+  
+! Initialize user driven parameters
+  Is_duopoly              := false;
+  Is_wait_and_see         := false;
+  
+  ! Initialize from data file
+  initialisations from "exercise4.txt"
+    Producers;
+    Generations;
+    Years;
+  end-initialisations
+
+  ! Declare dependent parameters
+  declarations
+    Init_Capacities:      dynamic array(Producers, Generations) of integer;
+    !Capacities:           dynamic array(Producers, Generations, Years) of mpvar;
+    Investment_cost:      dynamic array(Generations, Years) of integer;
+    a:                    dynamic array(Years) of integer;
+    b:                    dynamic array(Years) of integer;
+    p_co2:                dynamic array(Years) of real;
+    c:                    dynamic array(Generations) of real;
+    d:                    dynamic array(Generations) of real;
+    e:                    dynamic array(Generations) of real; ! emission
+    r:                    dynamic array(Years) of real; ! reduction factor
+    B_perf:               dynamic array(Producers, Generations) of real;
+    B_duop:               dynamic array(Producers, Generations) of real;
+    
+    discount:             real; ! discount factor (50% each decade)
+    M:                    real;
+  end-declarations
+
+  ! Declare variables and constraints
+  declarations
+    ! Objective function
+    Objective:            qexp;
+    CS:                   qexp; ! Consumer surplus
+    PS_Rev:               qexp; ! Producer surplus revenue
+    PS_Cost:              qexp; ! Producer surplus cost
+    MP:                   qexp; ! Market power
+    EC:                   qexp; ! Emission cost
+    IC:                   qexp; ! Investment cost
+
+    ! Variables
+    Q:                    dynamic array(Producers, Generations, Years) of mpvar;
+    !Q_demand:             dynamic array(Years) of mpvar;
+    !price:                dynamic array(Years) of mpvar;
+    Investment:           dynamic array(Producers, Generations, Years) of mpvar;
+    
+    ! Dual variables
+    u:                    dynamic array(Producers, Generations, Years) of mpvar;
+    w:                    dynamic array(Producers, Generations, Years) of mpvar;
+    lam:                  dynamic array(Producers, Generations, Years) of mpvar;
+    alpha:                dynamic array(Producers, Generations, Years) of mpvar;
+
+
+    ! Constraints
+    !Supply_demand:        dynamic array(Years) of linctr;
+    !Inverse_demand:       dynamic array(Years) of linctr;
+    !MaxCapacity:          dynamic array(Producers, Generations, Years) of linctr;
+    Hard_target:          dynamic array(Years) of linctr;
+    !Acc_cap:              dynamic array(Producers, Generations, Years) of linctr;
+    Invest_tech:          dynamic array(Producers, Generations, Years) of linctr;
+    Baseline:             dynamic array(Producers, Generations) of linctr;
+    
+    ! KKT constraints
+    Con11:                dynamic array(Producers, Generations, Years) of linctr;
+    Con12:                dynamic array(Producers, Generations, Years) of linctr;
+    Con13:                dynamic array(Producers, Generations, Years) of linctr;
+    Con21:                dynamic array(Producers, Generations, Years) of linctr;
+    Con22:                dynamic array(Producers, Generations, Years) of linctr;
+    Con23:                dynamic array(Producers, Generations, Years) of linctr;
+    Con31:                dynamic array(Producers, Generations, Years) of linctr;
+    Con32:                dynamic array(Producers, Generations, Years) of linctr;
+    Con33:                dynamic array(Producers, Generations, Years) of linctr;
+    Con41:                dynamic array(Producers, Generations, Years) of linctr;
+    Con42:                dynamic array(Producers, Generations, Years) of linctr;
+    Con43:                dynamic array(Producers, Generations, Years) of linctr;
+    Con51:                dynamic array(Producers, Generations, Years) of linctr;
+    Con52:                dynamic array(Producers, Generations, Years) of linctr;
+    Con53:                dynamic array(Producers, Generations, Years) of linctr;
+    Con61:                dynamic array(Producers, Generations, Years) of linctr;
+    Con62:                dynamic array(Producers, Generations, Years) of linctr;
+    Con63:                dynamic array(Producers, Generations, Years) of linctr;
+    
+    ! Binary variables
+    b1:                   dynamic array(Producers, Generations, Years) of linctr;
+    b2:                   dynamic array(Producers, Generations, Years) of linctr;
+    b3:                   dynamic array(Producers, Generations, Years) of linctr;
+    b4:                   dynamic array(Producers, Generations, Years) of linctr;
+    b5:                   dynamic array(Producers, Generations, Years) of linctr;
+    b6:                   dynamic array(Producers, Generations, Years) of linctr;
+
+  end-declarations
+
+  ! Initialize from data file
+  initialisations from "exercise4.txt"
+    Init_Capacities;
+    Investment_cost;
+    a;
+    b;
+    p_co2;
+    c;
+    d;
+    e;
+    r;
+    B_perf;
+    B_duop;
+  end-initialisations
+
+  discount := 0.50;
+  M := 10000;
+
+  ! Create all variables with producers, generations, years
+  forall(i in Producers, g in Generations, y in Years) do
+    create(Q(i,g,y));
+    create(Investment(i,g,y));
+    !create(Capacities(i,g,y));
+    
+    ! Binary
+    create(b1(i,g,y)) is_binary;
+    create(b2(i,g,y)) is_binary;
+    create(b3(i,g,y)) is_binary;
+    create(b4(i,g,y)) is_binary;
+    create(b5(i,g,y)) is_binary;
+    create(b6(i,g,y)) is_binary;
+    
+    ! Dual
+    create(u(i,g,y));
+    create(w(i,g,y));
+    create(lam(i,g,y));
+    create(alpha(i,g,y));
+  end-do
+
+  ! Create constraints
+  forall(i in Producers, g in Generations, y in Years) do
+  
+    ! KKT 1
+    Con11(i,g,y) := Q(i,g,y) <= M*b1(i,g,y);
+    Con12(i,g,y) := 0 <= b(y)*sum(j in Producers, k in Generations, l in Years)Q(j,k,l) + 
+    (a(y)-b(y)*sum(j in Producers, k in Generations, l in Years)Q(j,k,l)) -
+    b(y)*sum(j in Producers, k in Generations, l in Years)Q(j,k,l) - c(g) - 2*d(g)*Q(i,g,y) - lam(i,g,y) - 
+    sum(j in Producers, k in Generations, l in Years)x(j,k,l) + u;
+    Con13(i,g,y) := b(y)*sum(j in Producers, k in Generations, l in Years)Q(j,k,l) 
+    + (a-b(y)*sum(j in Producers, k in Generations, l in Years)Q(j,k,l)) -b(y)*sum(j in Producers, k in Generations, l in Years)Q(j,k,l) 
+    - c(g) - 2*d(g)*Q(i,g,y) - lam(i,g,y) - sum(j in Producers, k in Generations, l in Years)x(j,k,l) + u <= M*(1-b(i,g,y));
+    
+    ! KKT 2
+    Con21(i,g,y) := x(i,g,y) <= M*b2(i,g,y);
+    Con22(i,g,y) := 0 <= lam(i,g,y) + w(i,g,y);
+    Con23(i,g,y) := lam(i,g,y) + w(i,g,y) <= M*(1-b2(i,g,y));
+    
+    ! KKT 3
+    Con31(i,g,y) := u(i,g,y) <= M*b3(i,g,y);
+    Con32(i,g,y) := 0 <= Q(i,g,y);
+    Con33(i,g,y) := Q(i,g,y) <= M*(1-b2(i,g,y));
+    
+    ! KKT 4
+    Con41(i,g,y) := w(i,g,y) <= M*b4(i,g,y);
+    Con42(i,g,y) := 0 <= Investment(i,g,y);
+    Con43(i,g,y) := Investment(i,g,y) <= M*(1-b4(i,g,y));
+    
+    ! KKT 5
+    Con51(i,g,y) := lam(i,g,y) <= M*b5(i,g,y);
+    Con52(i,g,y) := 0 <= Init_Capacities(i,g) + sum(y2 in Years | y2 < y)Investment(i,g,y2) - Q(i,g,y);
+    Con53(i,g,y) := Init_Capacities(i,g) + sum(y2 in Years | y2 < y)Investment(i,g,y2) - Q(i,g,y) <= M*(1-b5(i,g,y));
+    
+    if not Is_wait_and_see then
+      ! KKT 6
+      Con61(i,g,y) := alpha(i,g,y) <= M*b6(i,g,y);
+      Con62(i,g,y) := 0 <= r(y)*B(i,g) - sum(i2 in Producers, g2 in Generations, y2 in Years)Q(i2,g2,y2)*e(g);
+      Con63(i,g,y) := r(y)*B(i,g) - sum(i2 in Producers, g2 in Generations, y2 in Years)Q(i2,g2,y2)*e(g) <= M*(1-b6(i,g,y));
+    end-if
+    
+  end-do
+  
+  forall(i in Producers, g in Generations) do
+    if Is_duopoly then
+      Baseline(i,g)           := Q_supply(i,g,Years(1)) = B_duop(i,g);
+    else
+      Baseline(i,g)           := Q_supply(i,g,Years(1)) = B_perf(i,g);
+    end-if
+  end-do
+
+
+  ! Objective function
+  CS          := sum(y in Years)1/2*b(y)*(sum(i in Producers, g in Generations)Q(i,g,y))^2/((1+discount)^((y-2020)/10));
+  PS_Rev      := sum(y in Years)(a(y) - b(y)*sum(i in Producers, g in Generations)Q(i,g,y))*(sum(i in Producers, g in Generations)Q(i,g,y))/((1+discount)^((y-2020)/10));
+  PS_Cost     := sum(i in Producers, g in Generations, y in Years)(c(g)+d(g)*Q(i,g,y))*Q(i,g,y)/((1+discount)^((y-2020)/10));
+  IC          := sum(i in Producers, g in Generations, y in Years)Investment(i,g,y)*Investment_cost(g,y)/((1+discount)^((y-2020)/10));
+
+  if Is_duopoly then
+    MP        := sum(y in Years)(1/2*b(y)*sum(i in Producers)((sum(g in Generations)Q(i,g,y))^2))/((1+discount)^((y-2020)/10));
+                !sum(y in Years)(1/2*b(y)*sum(i in Producers, g in Generations)((Q_supply(i,g,y))^2))/((1+discount)^((y-2020)/10));
+  else
+    MP        := 0;
+  end-if
+
+  if Is_wait_and_see then
+    EC        := sum(i in Producers, g in Generations, y in Years)Q(i,g,y)*e(g)*p_co2(y)/((1+discount)^((y-2020)/10));
+  else
+    EC        := 0;
+  end-if
+  
+  Objective := CS + PS_Rev - PS_Cost - IC - MP - EC;
+
+  setparam("xprs_verbose", true);
+
+  maximise(Objective);
+
+  ! ----------------------------------------------------------- !
+  
+  writeln("Begin running model");
+
+  writeln("The ''social welfare'' found is ", getsol(Objective));
   
 
 end-model
