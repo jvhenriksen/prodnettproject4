@@ -1,0 +1,18 @@
+model Exercise4
+  options explterm
+  options noimplicit
+  uses "mmxprs";
+
+  ! Declare sets and parameters
+  declarations
+    Producers:            set of string;
+    Generations:          set of string;
+    Years:                set of integer;
+    ! ------- !
+    Is_duopoly:           boolean; ! true = duopoly, false = perfect competition
+    Is_wait_and_see:      boolean; ! true = wait and see, false = hard target
+  end-declarations
+  
+  
+
+end-model

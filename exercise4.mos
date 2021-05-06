@@ -1,0 +1,273 @@
+model Exercise4
+  options explterm
+  options noimplicit
+  uses "mmxprs", "mmquad";
+
+  ! Declare sets and parameters
+  declarations
+    Producers:            set of string;
+    Generations:          set of string;
+    Years:                set of integer;
+    ! ------- !
+    Is_duopoly:           boolean; ! true = duopoly, false = perfect competition
+    Is_wait_and_see:      boolean; ! true = wait and see, false = hard target
+  end-declarations
+
+  ! Initialize user driven parameters
+  Is_duopoly              := false;
+  Is_wait_and_see         := false;
+
+  ! Initialize from data file
+  initialisations from "exercise4.txt"
+    Producers;
+    Generations;
+    Years;
+  end-initialisations
+
+  ! Declare dependent parameters
+  declarations
+    Init_Capacities:      dynamic array(Producers, Generations) of integer;
+    Capacities:           dynamic array(Producers, Generations, Years) of mpvar;
+    Investment_cost:      dynamic array(Generations, Years) of integer;
+    a:                    dynamic array(Years) of integer;
+    b:                    dynamic array(Years) of integer;
+    p_co2:                dynamic array(Years) of real;
+    c:                    dynamic array(Generations) of real;
+    d:                    dynamic array(Generations) of real;
+    e:                    dynamic array(Generations) of real; ! emission
+    r:                    dynamic array(Years) of real; ! reduction factor
+    discount:             real; ! discount factor (50% each decade)
+  end-declarations
+
+  ! Declare variables and constraints
+  declarations
+    ! Objective function
+    Objective:            qexp;
+    CS:                   qexp; ! Consumer surplus
+    PS_Rev:               qexp; ! Producer surplus revenue
+    PS_Cost:              qexp; ! Producer surplus cost
+    MP:                   qexp; ! Market power
+    EC:                   qexp; ! Emission cost
+    IC:                   qexp; ! Investment cost
+
+    ! Variables
+    Q_supply:             dynamic array(Producers, Generations, Years) of mpvar;
+    Q_demand:             dynamic array(Years) of mpvar;
+    price:                dynamic array(Years) of mpvar;
+    Investment:           dynamic array(Producers, Generations, Years) of mpvar;
+
+    ! Constraints
+    Supply_demand:        dynamic array(Years) of linctr;
+    Inverse_demand:       dynamic array(Years) of linctr;
+    MaxCapacity:          dynamic array(Producers, Generations, Years) of linctr;
+    Hard_target:          dynamic array(Years) of linctr;
+    Acc_cap:              dynamic array(Producers, Generations, Years) of linctr;
+    Invest_tech:          dynamic array(Producers, Generations, Years) of linctr;
+
+  end-declarations
+
+  ! Initialize from data file
+  initialisations from "exercise4.txt"
+    Init_Capacities;
+    Investment_cost;
+    a;
+    b;
+    p_co2;
+    c;
+    d;
+    e;
+    r;
+  end-initialisations
+
+  discount := 0.50;
+
+
+  ! Create all variables with producers, generations, years
+  forall(i in Producers, g in Generations, y in Years) do
+    create(Q_supply(i,g,y));
+    create(Investment(i,g,y));
+    create(Capacities(i,g,y));
+  end-do
+
+  ! Create all variables with years
+  forall(y in Years) do
+    create(Q_demand(y));
+    create(price(y));
+  end-do
+
+  ! Create constraints with year indexation
+  forall(y in Years) do
+    Supply_demand(y)          := sum(i in Producers, g in Generations)Q_supply(i,g,y) = Q_demand(y);
+    Inverse_demand(y)         := price(y) = a(y) - b(y)*Q_demand(y);
+    if not Is_wait_and_see then
+      Hard_target(y)          := sum(i in Producers, g in Generations)Q_supply(i,g,y)*e(g) <= r(y)*sum(i in Producers, g in Generations)Q_supply(i,g,Years(1))*e(g);
+    end-if
+  end-do
+
+
+  ! Create constraints with producers, generations and years indexation
+  forall(i in Producers, g in Generations, y in Years) do
+    MaxCapacity(i, g, y)      := Q_supply(i, g, y) <= Capacities(i, g, y);
+    if (i = "CFP" and g = "gas") or (i = "GFP" and g = "coal") then
+      Invest_tech(i,g,y)      := Investment(i,g,y) = 0;
+    end-if
+  end-do
+
+  forall(i in Producers, g in Generations) do
+    Acc_cap(i,g,Years(1))     := Capacities(i,g,Years(1)) = Init_Capacities(i,g);
+  end-do
+
+  forall(i in Producers, g in Generations, y in Years | y <> Years(1)) do
+    Acc_cap(i,g,y)            := Capacities(i,g,y) = Capacities(i,g,y-10) + Investment(i,g,y-10);
+  end-do
+
+
+  ! Objective function
+  CS          := sum(y in Years)1/2*b(y)*(Q_demand(y))^2/((1+discount)^((y-2020)/10));
+  PS_Rev      := sum(y in Years)price(y)*Q_demand(y)/((1+discount)^((y-2020)/10));
+  PS_Cost     := sum(i in Producers, g in Generations, y in Years)(c(g)+d(g)*Q_supply(i,g,y))*Q_supply(i,g,y)/((1+discount)^((y-2020)/10));
+  IC          := sum(i in Producers, g in Generations, y in Years)Investment(i,g,y)*Investment_cost(g,y)/((1+discount)^((y-2020)/10));
+
+  if Is_duopoly then
+    MP        := sum(y in Years)(1/2*b(y)*sum(i in Producers)((sum(g in Generations)Q_supply(i,g,y))^2))/((1+discount)^((y-2020)/10));
+                !sum(y in Years)(1/2*b(y)*sum(i in Producers, g in Generations)((Q_supply(i,g,y))^2))/((1+discount)^((y-2020)/10));
+  else
+    MP        := 0;
+  end-if
+
+  if Is_wait_and_see then
+    EC        := sum(i in Producers, g in Generations, y in Years)Q_supply(i,g,y)*e(g)*p_co2(y)/((1+discount)^((y-2020)/10));
+  else
+    EC        := 0;
+  end-if
+
+  Objective := CS + PS_Rev - PS_Cost - IC - MP - EC;
+
+  setparam("xprs_verbose", true);
+
+  maximise(Objective);
+
+  ! ----------------------------------------------------------- !
+
+
+  writeln("Begin running model");
+
+  writeln("The ''social welfare'' found is ", getsol(Objective));
+
+  writeln("---------------------------- Combination ----------------------------");
+  write(strfmt("Technology", 0));
+  write(strfmt("Year", 20));
+  write(strfmt("Production", 20));
+  write(strfmt("Emission\n", 20));
+  forall(g in Generations) do
+    forall(y in Years) do
+      write(strfmt(g, 0));
+      write(strfmt(y, 20));
+      write(strfmt(sum(i in Producers)getsol(Q_supply(i,g,y)), 20));
+      write(strfmt(sum(i in Producers)getsol(Q_supply(i,g,y))*e(g), 20));
+      write("\n");
+    end-do
+  end-do
+
+
+  writeln("---------------------------- Combination ----------------------------");
+  write(strfmt("Producer", 0));
+  write(strfmt("Year", 20));
+  write(strfmt("Sales", 20));
+  write(strfmt("Revenues", 20));
+  write(strfmt("Production cost", 20));
+  write(strfmt("Investment cost", 20));
+  write(strfmt("CO2 Tax", 20));
+  write(strfmt("Profit", 20));
+  write(strfmt("Avg Emission / kWh\n", 20));
+  forall(i in Producers) do
+    forall(y in Years) do
+      write(strfmt(i, 0));
+      write(strfmt(y, 20));
+      write(strfmt(sum(g in Generations)getsol(Q_supply(i,g,y)), 20));
+      write(strfmt(sum(g in Generations)getsol(Q_supply(i,g,y))*getsol(price(y)), 20));
+      write(strfmt(sum(g in Generations)(c(g)*getsol(Q_supply(i,g,y)) + d(g)*getsol(Q_supply(i,g,y))^2), 20));
+      write(strfmt(sum(g in Generations)getsol(Investment(i,g,y)), 20));
+      write(strfmt(sum(g in Generations)getsol(Q_supply(i,g,y))*e(g)*p_co2(y), 20));
+      write(strfmt(sum(g in Generations)(getsol(price(y))*getsol(Q_supply(i,g,y))-(c(g)*getsol(Q_supply(i,g,y)) + d(g)*getsol(Q_supply(i,g,y))^2)-getsol(Investment(i,g,y))), 20)); ! revenue - cost - investment
+      write(strfmt((sum(g in Generations)getsol(Q_supply(i,g,y))*e(g))/sum(gs in Generations)getsol(Q_supply(i,gs,y)), 20));
+      write("\n");
+    end-do
+  end-do
+
+  writeln("---------------------------- Combination ----------------------------");
+  write(strfmt("Year", 0));
+  write(strfmt("Consumption", 20));
+  write(strfmt("Price", 20));
+  write(strfmt("Consumer surplus", 20));
+  write(strfmt("Producers profits", 20));
+  write(strfmt("Emission", 20));
+  write(strfmt("Avg Emission / kWh\n", 20));
+  forall(y in Years) do
+    write(strfmt(y, 0));
+    write(strfmt(getsol(Q_demand(y)), 20));
+    write(strfmt(getsol(price(y)), 20));
+    write(strfmt(1/2*b(y)*getsol(Q_demand(y))^2, 20));
+    if Is_wait_and_see then
+      write(strfmt(getsol(Q_demand(y))*getsol(price(y)) -
+      sum(i in Producers, g in Generations)(c(g)+d(g)*getsol(Q_supply(i,g,y)))*getsol(Q_supply(i,g,y)), 20));
+    else
+      write(strfmt(getsol(Q_demand(y))*getsol(price(y)) -
+      sum(i in Producers, g in Generations)(c(g)+d(g)*getsol(Q_supply(i,g,y)))*getsol(Q_supply(i,g,y)) -
+      sum(i in Producers, g in Generations)getsol(Q_supply(i,g,y))*e(g)*p_co2(y), 20));
+    end-if
+    write(strfmt(sum(i in Producers, g in Generations)getsol(Q_supply(i,g,y))*e(g), 20));
+    write(strfmt((sum(i in Producers, g in Generations)getsol(Q_supply(i,g,y))*e(g))/sum(is in Producers, gs in Generations)getsol(Q_supply(is,gs,y)), 20));
+    write("\n");
+  end-do
+
+  writeln("\n\nMarginal cost equals marginal revenue for CFP?");
+
+  if not Is_duopoly and not Is_wait_and_see then
+    ! Year 2020
+    forall(g in Generations) do
+      writeln(g);
+      writeln("Marginal cost = ");
+      writeln(c(g)+2*d(g)*getsol(Q_supply("CFP", g, 2020)));
+      writeln("Marginal revenue = ");
+      writeln(a(2020)-b(2020)*getsol(Q_demand(2020))-b(2020)*getsol(Q_supply("CFP",g,2020)));
+    end-do
+    writeln("Perfect competition, hard target");
+    writeln("Marginal cost = ");
+    writeln(sum(g in Generations | g <> "coal")(c(g)+2*d(g)*getsol(Q_supply("CFP", g, 2020))));
+    writeln("Marginal revenue = ");
+    writeln(a(2020)-b(2020)*getsol(Q_demand(2020))-b(2020)*sum(g in Generations | g <> "coal")getsol(Q_supply("CFP",g,2020)));
+    writeln(getsol(price(2020)));
+  end-if
+
+  if Is_duopoly then
+    ! Year 2020
+    forall(g in Generations) do
+      writeln(g);
+      writeln("Marginal cost = ");
+      writeln(c(g)+2*d(g)*getsol(Q_supply("CFP", g, 2020)));
+      writeln("Marginal revenue = ");
+      writeln(a(2020)-b(2020)*getsol(Q_demand(2020))-b(2020)*getsol(Q_supply("CFP",g,2020)));
+    end-do
+    writeln("Duopoly");
+    writeln("Marginal cost = ");
+    writeln(sum(g in Generations)(c(g)+2*d(g)*getsol(Q_supply("CFP", g, 2020))));
+    writeln("Marginal revenue = ");
+    writeln(a(2020)-b(2020)*getsol(Q_demand(2020))-b(2020)*sum(g in Generations | g <> "coal")getsol(Q_supply("CFP",g,2020)));
+  end-if
+
+  if not Is_duopoly and Is_wait_and_see then
+    ! Year 2050
+    writeln("Perfect competition, tax");
+    writeln("Marginal cost = ");
+    writeln(sum(g in Generations)((c(g)+2*d(g)*getsol(Q_supply("CFP", g, 2050))) + e(g)*p_co2(2050)));
+    writeln("Marginal revenue = ");
+    writeln(a(2050)-2*b(2050)*getsol(Q_demand(2050)));
+    !writeln(a(2050)-2*b(2050)*sum(g in Generations)getsol(Q_supply("CFP",g,2050)));
+  end-if
+
+
+
+
+  writeln("End running model");
+end-model
